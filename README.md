@@ -142,10 +142,9 @@ links the C runtime statically, so there is no Visual C++ redistributable to ins
 - `RoomHome.exe --screenshot out.png --demo [--sheet settings|wifi|...] [--lang th]` renders a screen to a
   PNG file without opening a window. The screenshots above were made this way.
 
-Both test scripts pass on all three builds, and the x64 and x86 builds have also been run on other PCs.
-Not yet tested on real hardware:
+Both test scripts pass on all three builds. The x64 and x86 builds have also been used on other PCs,
+where Wi-Fi and a real shutdown worked. Not yet tested on real hardware:
 
 - touch and pen input
-- joining a Wi-Fi network with a password
-- an actual shutdown or restart (the tests use `--dry-run`)
+- an actual restart (the automated tests use `--dry-run`)
 - building on an x64 machine (it has only been built on ARM64 so far)
