@@ -1,0 +1,31 @@
+{
+  "language": "auto",
+  "roomName": "Board Room 3",
+  "subtitle": "",
+  "clock": "auto",
+  "weekStart": "auto",
+  "theme": "auto",
+  "accent": "#0A84FF",
+  "wallpaperDark": "",
+  "wallpaperLight": "",
+  "keepScreenOn": false,
+  "ambientAfterMinutes": 15,
+  "dockSlots": 6,
+  "volumeStep": 5,
+  "adminPin": "",
+  "monitor": 0,
+  "dock": [
+    { "name": "Zoom", "kind": "zoom", "target": "", "args": "", "icon": "video", "color": "#2D8CFF" },
+    { "name": "Microsoft Teams", "kind": "teams", "target": "", "args": "", "icon": "people", "color": "#5B5FC7" },
+    { "name": "Google Meet", "kind": "web", "target": "https://meet.google.com", "args": "", "icon": "videochat", "color": "#00A862" },
+    { "name": "Webex", "kind": "webex", "target": "", "args": "", "icon": "headset", "color": "#1D9BC9" },
+    { "name": "Microsoft Edge", "kind": "edge", "target": "", "args": "", "icon": "globe", "color": "#0F78D4" },
+    { "name": "File Explorer", "kind": "explorer", "target": "", "args": "", "icon": "folder", "color": "#E8A317" }
+  ],
+  "widgets": [
+    { "type": "analog", "seconds": true, "numbers": true, "date": true },
+    { "type": "digital", "seconds": true, "greeting": true, "date": true, "size": "normal" },
+    { "type": "calendar", "weekNumbers": false },
+    { "type": "note", "title": "Guest Wi-Fi", "text": "Network: Office-Guest\nPassword: change-me", "size": "normal", "color": "#FFD60A" }
+  ]
+}
