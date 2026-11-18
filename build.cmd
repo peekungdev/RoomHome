@@ -8,7 +8,7 @@ rem build tools (found with vswhere; or set VCVARS to vcvarsall.bat), and NSIS 3
 rem (or set MAKENSIS). Works on an x64 or an ARM64 Windows build machine.
 setlocal
 set ROOT=%~dp0
-set VER=1.2.0
+set VER=1.3.0
 if not defined MAKENSIS set "MAKENSIS=%ProgramFiles(x86)%\NSIS\makensis.exe"
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if defined VCVARS goto :havevc
@@ -62,9 +62,12 @@ cl /nologo /std:c++20 /O2 /MT /W4 /EHsc /permissive- /utf-8 /MP /DUNICODE /D_UNI
    /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /Fo"%OUT%\\" ^
    "%ROOT%src\main.cpp" "%ROOT%src\home.cpp" "%ROOT%src\sheets.cpp" "%ROOT%src\widgets.cpp" ^
    "%ROOT%src\ui.cpp" "%ROOT%src\gfx.cpp" "%ROOT%src\system.cpp" "%ROOT%src\config.cpp" ^
-   "%ROOT%src\json.cpp" "%ROOT%src\util.cpp" "%ROOT%src\lang.cpp" "%OUT%\RoomHome.res" ^
+   "%ROOT%src\json.cpp" "%ROOT%src\util.cpp" "%ROOT%src\lang.cpp" "%ROOT%src\camera.cpp" "%OUT%\RoomHome.res" ^
    /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OUT:"%OUT%\RoomHome.exe" ^
    d2d1.lib dwrite.lib windowscodecs.lib wlanapi.lib iphlpapi.lib ws2_32.lib ole32.lib oleaut32.lib uuid.lib ^
-   shell32.lib shlwapi.lib user32.lib gdi32.lib advapi32.lib comctl32.lib dxguid.lib dwmapi.lib || exit /b 1
+   shell32.lib shlwapi.lib user32.lib gdi32.lib advapi32.lib comctl32.lib dxguid.lib dwmapi.lib cfgmgr32.lib ^
+   mf.lib mfplat.lib mfreadwrite.lib mfuuid.lib delayimp.lib ^
+   /DELAYLOAD:mf.dll /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll || exit /b 1
+rem (Media Foundation is delay-loaded: Windows "N" editions may not have it, and RoomHome must still start there)
 echo built %OUT%\RoomHome.exe
 exit /b 0

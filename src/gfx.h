@@ -57,6 +57,7 @@ public:
 
     // images
     ComPtr<ID2D1Bitmap> BitmapFromPixels(int w, int h, const void* bgraPremul);
+    ComPtr<ID2D1Bitmap> BitmapFromBgrx(int w, int h, const void* bgrx);   // alpha bytes ignored (camera pictures)
     ComPtr<IWICBitmapSource> LoadImageFile(const std::wstring& path, UINT maxW, UINT maxH);
 
     void ClearTextCaches() { fmts_.clear(); layouts_.clear(); }

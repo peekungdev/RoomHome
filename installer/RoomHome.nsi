@@ -1,6 +1,6 @@
 ﻿; RoomHome installer: one setup for x64, x86 (32-bit) and ARM64 Windows, in English and Thai.
-;   makensis /DVERSION=1.2.0 RoomHome.nsi
-;   makensis /DVERSION=1.2.0 /DTESTBUILD /DOUTFILE=<path> RoomHome.nsi   (per-user build for automated tests)
+;   makensis /DVERSION=1.3.0 RoomHome.nsi
+;   makensis /DVERSION=1.3.0 /DTESTBUILD /DOUTFILE=<path> RoomHome.nsi   (per-user build for automated tests)
 ; Setup switches:
 ;   /S              silent
 ;   /LANG=en|th     setup and RoomHome language (default: asks; silent installs use the Windows language)
@@ -13,7 +13,7 @@ Unicode true
 ManifestDPIAware true
 
 !ifndef VERSION
-  !define VERSION "1.2.0"
+  !define VERSION "1.3.0"
 !endif
 !define APP        "RoomHome"
 !define PUBLISHER  "RoomHome"

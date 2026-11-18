@@ -307,6 +307,13 @@ void Gfx::PopOpacity() {
 void Gfx::PushClip(Box b) { rt->PushAxisAlignedClip(b.rect(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE); }
 void Gfx::PopClip() { rt->PopAxisAlignedClip(); }
 
+ComPtr<ID2D1Bitmap> Gfx::BitmapFromBgrx(int w, int h, const void* bgrx) {
+    ComPtr<ID2D1Bitmap> bmp;
+    D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+    if (rt) rt->CreateBitmap(D2D1::SizeU(w, h), bgrx, w * 4, bp, &bmp);
+    return bmp;
+}
+
 ComPtr<ID2D1Bitmap> Gfx::BitmapFromPixels(int w, int h, const void* bgra) {
     ComPtr<ID2D1Bitmap> bmp;
     D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));

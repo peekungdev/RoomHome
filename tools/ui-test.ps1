@@ -1,8 +1,10 @@
 # End-to-end UI test for RoomHome. Runs the real window off-screen (never activated) with a
 # throw-away config, drives it with posted mouse/keyboard messages and captures it with PrintWindow.
 # It only ever touches its own process: a RoomHome you are using is left alone.
-# Run with Windows PowerShell 5.1:  powershell -File tools\ui-test.ps1 -Arch x64 -OutDir <dir>
-param([string]$Arch = 'x64', [Parameter(Mandatory)][string]$OutDir)
+# Run with Windows PowerShell 5.1:  powershell -File tools\ui-test.ps1 -Arch x64 -OutDir <dir> [-Camera]
+# -Camera adds a live camera test: it turns this PC's room camera on for a few seconds. It checks the app's
+# log only - no camera picture is captured or saved.
+param([string]$Arch = 'x64', [Parameter(Mandatory)][string]$OutDir, [switch]$Camera)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
@@ -187,5 +189,39 @@ try {
     Check 'language back to Auto' ((ReadCfg).language -eq 'auto')
     Check 'room name kept through the switches' ((ReadCfg).roomName -eq 'Board Room 3')
 } finally { Check 'run 4 closed its own window' (StopApp $p $h) }
+
+# ---- run 5 (-Camera only): the camera test sheet shows the room camera live, and lets it go when closed
+if ($Camera) {
+    $log = Join-Path $OutDir "$Arch-camera.log"
+    Remove-Item $log -ErrorAction SilentlyContinue
+    $p, $h = StartApp @('--open', 'camera', '--log', $log)
+    try {
+        Check 'camera sheet open' ($h -ne [IntPtr]::Zero)
+        $t = ''
+        $deadline = (Get-Date).AddSeconds(20)
+        do {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $log) {   # the app is still writing it: share read/write
+                $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+                $sr = New-Object IO.StreamReader($fs)
+                $t = $sr.ReadToEnd()
+                $sr.Close()
+            }
+        } until ($t -match 'camera: \d+ pictures' -or $t -match 'camera: phase=3' -or (Get-Date) -gt $deadline)
+        $first = [regex]::Match($t, 'camera: phase=2 fail=0 hr=00000000 size=(\d+)x(\d+) first=(\d+)ms')
+        Check "camera picture arrives ($($first.Groups[1].Value)x$($first.Groups[2].Value) after $($first.Groups[3].Value) ms)" $first.Success
+        $rate = [regex]::Match($t, 'camera: (\d+) pictures, ([\d.]+) fps, brightness (\d+)')
+        Check "camera keeps streaming ($($rate.Groups[2].Value) fps)" ($rate.Success -and [double]$rate.Groups[2].Value -ge 5)
+        $c = ReadCfg
+        Check "room camera picked automatically ($($c.camera))" ($c -and $c.cameraId -like 'USB\VID_*')
+        Key $h 0x1B                              # Esc closes the sheet, which must release the camera
+        $deadline = (Get-Date).AddSeconds(5)
+        do {
+            Start-Sleep -Milliseconds 300
+            $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs); $t = $sr.ReadToEnd(); $sr.Close()
+        } until ($t -match 'camera: released' -or (Get-Date) -gt $deadline)
+        Check 'camera released when the sheet closes' ($t -match 'camera: released')
+    } finally { Check 'run 5 closed its own window' (StopApp $p $h) }
+}
 "failures: $fails"
 exit $fails

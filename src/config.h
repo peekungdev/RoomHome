@@ -60,6 +60,8 @@ struct Config {
     int volumeStep = 5;                  // percent per +/- press
     std::wstring adminPin;               // digits; empty = no lock
     int monitor = 0;                     // 0 = primary, N = Nth display (1-based)
+    std::wstring camera, cameraId;       // the room camera (name, "USB\VID_xxxx&PID_xxxx"); empty = not chosen yet
+    bool cameraMirror = true;            // show the test picture like a mirror, as meeting apps do
     std::vector<DockItem> dock;
     std::vector<WidgetCfg> widgets;
 };

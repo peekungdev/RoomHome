@@ -3,8 +3,10 @@
 #include "lang.h"
 
 static D2D1_MATRIX_3X2_F s_savedWorld;
+static void StartCameraTest();
 
 void OpenSheet(Sheet s) {
+    if (g.sheet == Sheet::Camera && s != Sheet::Camera) g_camPreview.Stop();
     edits.Clear();
     if (g.sheetT < 0.02f) ui.AnimSet(Id("sheetT"), 0.f);
     g.sheet = s;
@@ -32,6 +34,9 @@ void OpenSheet(Sheet s) {
         g.pin.entered.clear();
         g.pin.wrong = false;
         break;
+    case Sheet::Camera:
+        StartCameraTest();
+        break;
     default:
         break;
     }
@@ -56,6 +61,10 @@ static void CommitSettings() {
 void CloseSheet() {
     if (!g.sheetOpen) return;
     if (g.sheet == Sheet::Settings) CommitSettings();
+    if (g.sheet == Sheet::Camera) {   // free the camera at once; the last picture stays for the closing fade
+        g_camPreview.Stop();
+        g.cam.paused = false;
+    }
     edits.Clear();
     g.sheetOpen = false;
     g_net.SetWantList(false);
@@ -1087,6 +1096,418 @@ static void SheetPin() {
     EndSheet();
 }
 
+// ---------------------------------------------------------------- camera
+static const wchar_t kCamDeniedTitle[] = L"Windows is blocking the camera";
+static const wchar_t kCamDeniedText[] =
+    L"Turn on camera access in Windows Settings \x203A Privacy & security \x203A Camera, including access for desktop apps.";
+
+static bool SameText(const std::wstring& a, const std::wstring& b) { return !a.empty() && _wcsicmp(a.c_str(), b.c_str()) == 0; }
+
+// The camera the light on the home screen watches: the one picked in the camera sheet (the first USB
+// camera seen is picked automatically), else the best one there is.
+const CamDevice* RoomCamera(const CamStatus& s, std::wstring* missingName) {
+    if (!g.cfg.camera.empty() || !g.cfg.cameraId.empty()) {
+        const CamDevice* best = nullptr;
+        int bestScore = 0;
+        for (auto& d : s.cams) {
+            bool id = SameText(d.hwid, g.cfg.cameraId), name = !g.cfg.camera.empty() && d.name == g.cfg.camera;
+            int score = (id ? 2 : 0) + (name ? 2 : 0) + (d.link.empty() ? 0 : 1);
+            if ((id || name) && score > bestScore) {
+                bestScore = score;
+                best = &d;
+            }
+        }
+        if (!best && missingName) *missingName = g.cfg.camera.empty() ? g.cfg.cameraId : g.cfg.camera;
+        return best;
+    }
+    for (auto& d : s.cams) if (d.external && !d.virt && !d.link.empty()) return &d;
+    for (auto& d : s.cams) if (!d.virt && !d.link.empty()) return &d;
+    for (auto& d : s.cams) if (!d.link.empty()) return &d;
+    return s.cams.empty() ? nullptr : &s.cams[0];
+}
+
+static void CamProblemText(const CamDevice& d, std::wstring& title, std::wstring& text) {
+    if (d.problem == 22) {          // CM_PROB_DISABLED
+        title = Format(Tr(L"%s is turned off"), d.name.c_str());
+        text = Tr(L"Turn it on again in Windows Settings \x203A Bluetooth & devices \x203A Cameras, or in Device Manager.");
+    } else if (d.problem == 28) {   // CM_PROB_FAILED_INSTALL
+        title = Format(Tr(L"%s has no driver"), d.name.c_str());
+        text = Tr(L"Windows Update can usually install one. Or unplug the camera and plug it in again.");
+    } else if (d.problem) {
+        title = Format(Tr(L"%s has a problem (Code\x00A0%d)"), d.name.c_str(), d.problem);   // no-break space: "Code 10" stays together
+        text = Tr(L"Unplug it and plug it in again. If that doesn't help, reinstall it in Device Manager.");
+    } else {
+        title = Format(Tr(L"%s is not available"), d.name.c_str());
+        text = Tr(L"Unplug it and plug it in again.");
+    }
+}
+
+static void CamFailText(int fail, HRESULT hr, std::wstring& title, std::wstring& text) {
+    switch (fail) {
+    case CAMFAIL_DENIED: title = Tr(kCamDeniedTitle); text = Tr(kCamDeniedText); break;
+    case CAMFAIL_BUSY:
+        title = Tr(L"Another app is using the camera");
+        text = Tr(L"Close the other app or meeting, then press Test again.");
+        break;
+    case CAMFAIL_NOPICTURE:
+        title = Tr(L"The camera sends no picture");
+        text = Tr(L"Unplug the camera and plug it in again, or try another USB port.");
+        break;
+    case CAMFAIL_STOPPED:
+        title = Tr(L"The picture stopped");
+        text = Tr(L"Unplug the camera and plug it in again, or try another USB port.");
+        break;
+    case CAMFAIL_GONE:
+        title = Tr(L"The camera was disconnected");
+        text = Tr(L"Plug it in again. The test starts by itself when it is back.");
+        break;
+    case CAMFAIL_NOMF:
+        title = Tr(L"Camera preview needs the Media Feature Pack");
+        text = Tr(L"This edition of Windows has no video components. Add the Media Feature Pack in Settings \x203A System \x203A Optional features.");
+        break;
+    default:
+        title = Tr(L"The camera could not start");
+        text = HResultText(hr);
+        break;
+    }
+}
+
+int CameraLight(std::wstring* title, std::wstring* detail) {
+    std::wstring t, d;
+    int r = 1;
+    const CamStatus& s = g.cams;
+    if (!s.ready) {
+        t = Tr(L"Looking for cameras\x2026");
+        r = 0;
+    } else if (s.denied) {
+        t = Tr(kCamDeniedTitle);
+        d = Tr(kCamDeniedText);
+        r = 2;
+    } else if (s.mfMissing) {
+        CamFailText(CAMFAIL_NOMF, S_OK, t, d);
+        r = 2;
+    } else {
+        std::wstring missing;
+        const CamDevice* c = RoomCamera(s, &missing);
+        if (!c && !missing.empty()) {
+            t = Format(Tr(L"%s is not connected"), missing.c_str());
+            d = Tr(L"Plug it in again, or pick another camera.");
+            r = 2;
+        } else if (!c) {
+            t = Tr(L"No camera found");
+            d = Tr(L"Plug in the USB camera. It appears here by itself.");
+            r = 2;
+        } else if (c->problem || c->link.empty()) {
+            CamProblemText(*c, t, d);
+            r = 2;
+        } else if (g.camTest.result == 2 && g.camTest.name == c->name && g.camTest.fail != CAMFAIL_BUSY) {
+            CamFailText(g.camTest.fail, g.camTest.hr, t, d);   // another app using it doesn't make it broken
+            r = 2;
+        } else {
+            t = c->name;
+        }
+    }
+    if (title) *title = t;
+    if (detail) *detail = d;
+    return r;
+}
+
+static void ResetCamPicture() {
+    CamUi& c = g.cam;
+    c.st = CamPreviewState();
+    c.px.clear();
+    c.px.shrink_to_fit();
+    c.pw = c.ph = 0;
+    c.seq = c.bmpSeq = 0;
+    c.bmp.Reset();
+    c.paused = false;
+}
+
+static void StartCameraTest() {
+    CamUi& c = g.cam;
+    g_camPreview.Stop();
+    ResetCamPicture();
+    c.startedAt = g.now;
+    const CamDevice* d = g.cams.ready && !g.cams.denied && !g.cams.mfMissing ? RoomCamera(g.cams) : nullptr;
+    c.name = d ? d->name : L"";
+    c.link = d && !d->problem ? d->link : L"";
+    if (c.link.empty()) return;   // nothing to show: the sheet says why
+    if (c.demo) { DemoCamera(); return; }
+    if (g.screenshot) return;     // screenshots never open a real camera
+    g_camPreview.Start(c.link, g.hwnd);
+    c.st.phase = CamPreviewState::Starting;
+}
+
+void CameraSheetGone() {
+    if (g_camPreview.Active()) return;
+    ResetCamPicture();
+    g.cam.name.clear();
+    g.cam.link.clear();
+}
+
+void OnCameraFrame() {
+    g_camPreview.FrameShown();
+    if (!g_camPreview.Active() || g.cam.demo) return;
+    CamUi& c = g.cam;
+    CamPreviewState prev = c.st;
+    c.st = g_camPreview.State();
+    int w = 0, h = 0;
+    if (g_camPreview.TakeFrame(c.px, w, h, c.seq)) {
+        c.pw = w;
+        c.ph = h;
+    }
+    if (c.st.phase == CamPreviewState::Running && prev.phase != CamPreviewState::Running) g.camTest = { c.name, 1, 0, S_OK };
+    if (c.st.phase == CamPreviewState::Failed && (prev.phase != CamPreviewState::Failed || prev.fail != c.st.fail))
+        g.camTest = { c.name, 2, c.st.fail, c.st.hr };
+    // these end the session on its own thread; keep the last state on screen
+    if (c.st.phase == CamPreviewState::Failed && c.st.fail != CAMFAIL_NOPICTURE && c.st.fail != CAMFAIL_STOPPED) g_camPreview.Stop();
+    RequestFrame();
+}
+
+void OnCamerasChanged() {
+    CamStatus before = g.cams;
+    g.cams = g_cams.Snapshot();
+    if (g.cfg.camera.empty() && g.cfg.cameraId.empty()) {
+        for (auto& d : g.cams.cams)
+            if (d.external && !d.virt && !d.link.empty()) {   // the first USB camera seen becomes the room camera
+                g.cfg.camera = d.name;
+                g.cfg.cameraId = d.hwid;
+                SaveConfig();
+                break;
+            }
+    }
+    // a camera that was plugged in again (or a new one) gets a fresh chance
+    bool changed = before.cams.size() != g.cams.cams.size();
+    for (size_t i = 0; !changed && i < before.cams.size(); i++)
+        changed = before.cams[i].link != g.cams.cams[i].link || before.cams[i].problem != g.cams.cams[i].problem;
+    if (changed && !g_camPreview.Active()) g.camTest = CamTest();
+    if (g.sheet == Sheet::Camera && g.sheetOpen && !g.cam.demo && !g.cam.paused) {
+        const CamDevice* d = RoomCamera(g.cams);
+        std::wstring link = d && !d->problem && !g.cams.denied ? d->link : L"";
+        if (link != g.cam.link || (!link.empty() && !g_camPreview.Active())) StartCameraTest();
+    }
+    RequestFrame();
+}
+
+void CameraAppActive(bool active) {
+    if (g.sheet != Sheet::Camera || !g.sheetOpen || g.cam.demo) return;
+    if (!active && g_camPreview.Active()) {   // let the app in front (Settings, a meeting) have the camera
+        g_camPreview.Stop();
+        ResetCamPicture();
+        g.cam.paused = true;
+    } else if (active && g.cam.paused) {
+        StartCameraTest();
+    }
+    RequestFrame();
+}
+
+void DemoCamera() {   // SMPTE-style colour bars, so screenshots never show a real room
+    CamUi& c = g.cam;
+    const int w = 1280, h = 720;
+    static const uint32_t top[7] = { 0xC0C0C0, 0xC0C000, 0x00C0C0, 0x00C000, 0xC000C0, 0xC00000, 0x0000C0 };
+    static const uint32_t mid[7] = { 0x0000C0, 0x131313, 0xC000C0, 0x131313, 0x00C0C0, 0x131313, 0xC0C0C0 };
+    static const uint32_t low[6] = { 0x00214C, 0xFFFFFF, 0x32006A, 0x131313, 0x090909, 0x1D1D1D };
+    c.px.assign((size_t)w * h * 4, 0);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint32_t rgb = y < h * 2 / 3 ? top[x * 7 / w] : y < h * 3 / 4 ? mid[x * 7 / w] : low[x * 6 / w];
+            uint8_t* p = &c.px[((size_t)y * w + x) * 4];
+            p[0] = (uint8_t)(rgb & 255);
+            p[1] = (uint8_t)((rgb >> 8) & 255);
+            p[2] = (uint8_t)((rgb >> 16) & 255);
+            p[3] = 255;
+        }
+    c.pw = w;
+    c.ph = h;
+    c.seq++;
+    c.st = CamPreviewState();
+    c.st.phase = CamPreviewState::Running;
+    c.st.w = w;
+    c.st.h = h;
+    c.st.fps = 30.f;
+    c.st.frames = 300;
+    c.st.luma = 120.f;
+    g.camTest = { c.name, 1, 0, S_OK };
+}
+
+static void CamSpinner(float cx, float cy, float r, D2D1_COLOR_F col) {
+    float a = (float)std::fmod(g.now * 320.0, 360.0);
+    gfx.Arc(cx, cy, r, a, a + 270.f, col, 4.f);
+    ui.KeepAnimating("camspin");
+}
+
+static void SheetCamera() {
+    CamUi& c = g.cam;
+    const CamStatus& s = g.cams;
+    std::wstring lightTitle, lightText;
+    int light = CameraLight(&lightTitle, &lightText);
+    Box card = BeginSheet(1400.f, 900.f, L"Camera", L"Check that the room camera works before the meeting");
+    Box pv{ card.x + 44.f, card.y + 128.f, 896.f, 504.f };   // 16:9
+    float rx = pv.r() + 40.f, rw = card.r() - 44.f - rx;
+    const CamPreviewState& st = c.st;
+    bool running = st.phase == CamPreviewState::Running && c.pw > 0 && !c.px.empty();
+    bool showPicture = c.pw > 0 && !c.px.empty() && (running || !g.sheetOpen);
+
+    // ---- the picture
+    gfx.FillRect(pv, Rgb(0x050608), 22.f);
+    if (showPicture) {
+        if (!c.bmp || c.bmpGen != gfx.gen || c.bmpSeq != c.seq) {
+            D2D1_SIZE_U sz = c.bmp ? c.bmp->GetPixelSize() : D2D1::SizeU(0, 0);
+            if (c.bmp && c.bmpGen == gfx.gen && (int)sz.width == c.pw && (int)sz.height == c.ph)
+                c.bmp->CopyFromMemory(nullptr, c.px.data(), (UINT32)c.pw * 4);
+            else {
+                c.bmp = gfx.BitmapFromBgrx(c.pw, c.ph, c.px.data());
+                c.bmpGen = gfx.gen;
+            }
+            c.bmpSeq = c.seq;
+        }
+        if (c.bmp) {
+            float k = std::min(pv.w / c.pw, pv.h / c.ph);
+            Box dst{ pv.cx() - c.pw * k / 2, pv.cy() - c.ph * k / 2, c.pw * k, c.ph * k };
+            ComPtr<ID2D1RoundedRectangleGeometry> geo;
+            gfx.factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(pv.rect(), 22.f, 22.f), &geo);
+            if (geo) gfx.PushMask(geo.Get());
+            D2D1_MATRIX_3X2_F saved;
+            gfx.rt->GetTransform(&saved);
+            if (g.cfg.cameraMirror) gfx.rt->SetTransform(D2D1::Matrix3x2F::Scale(-1.f, 1.f, D2D1::Point2F(dst.cx(), dst.cy())) * saved);
+            gfx.rt->DrawBitmap(c.bmp.Get(), dst.rect(), 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            gfx.rt->SetTransform(saved);
+            if (geo) gfx.PopMask();
+        }
+        if (running) {
+            // "Working" chip, top left
+            std::wstring ok = Tr(L"Working");
+            float tw = gfx.TextWidth(ok, FACE_TEXT, 19.f, W_SEMIBOLD);
+            Box chip{ pv.x + 18.f, pv.y + 18.f, tw + 58.f, 42.f };
+            gfx.FillRect(chip, Rgb(0x000000, 0.55f), 21.f);
+            gfx.FillCircle(chip.x + 22.f, chip.cy(), 7.f, g.th.success);
+            gfx.Text(ok, { chip.x + 38.f, chip.y, tw + 10.f, chip.h }, FACE_TEXT, 19.f, W_SEMIBOLD, Rgb(0xFFFFFF));
+            // a very dark picture: probably a closed privacy shutter or lens cover
+            if (st.luma >= 0 && st.luma < 14.f && g.now - c.startedAt > 2.0) {
+                Box hint{ pv.x + 40.f, pv.b() - 98.f, pv.w - 80.f, 70.f };
+                gfx.FillRect(hint, Rgb(0x000000, 0.62f), 18.f);
+                gfx.Glyph(0xE7BA, { hint.x + 14.f, hint.y, 44.f, hint.h }, 22.f, g.th.warn);
+                gfx.Text(L"The picture is very dark. Is the privacy shutter or lens cover closed?",
+                         { hint.x + 64.f, hint.y, hint.w - 80.f, hint.h }, FACE_TEXT, 19.f, W_SEMIBOLD, Rgb(0xFFFFFF), AL_LEFT, true, true);
+            }
+        }
+    } else {
+        std::wstring t, d;
+        wchar_t glyph = 0xE960;
+        bool spin = false, bad = false;
+        if (c.paused) t = Tr(L"Paused while another app is in front");
+        else if (st.phase == CamPreviewState::Starting) { t = Tr(L"Starting the camera\x2026"); spin = true; }
+        else if (st.phase == CamPreviewState::Failed) { CamFailText(st.fail, st.hr, t, d); glyph = 0xE7BA; bad = st.fail != CAMFAIL_BUSY; }
+        else if (light == 2) { t = lightTitle; d = lightText; glyph = 0xE7BA; bad = true; }
+        else { t = Tr(L"Looking for cameras\x2026"); spin = true; }
+        float cy = pv.y + pv.h * 0.36f;
+        if (spin) CamSpinner(pv.cx(), cy, 34.f, Rgb(0xFFFFFF, 0.8f));
+        else {
+            gfx.FillCircle(pv.cx(), cy, 46.f, bad ? MulA(g.th.danger, 0.22f) : Rgb(0xFFFFFF, 0.10f));
+            gfx.Glyph(glyph, { pv.cx() - 46.f, cy - 46.f, 92.f, 92.f }, 38.f, bad ? g.th.danger : Rgb(0xFFFFFF, 0.8f));
+        }
+        gfx.literal = true;   // the texts are already translated and may hold camera names
+        gfx.Text(t, { pv.x + 40.f, cy + 64.f, pv.w - 80.f, 44.f }, FACE_TEXT, 27.f, W_SEMIBOLD, Rgb(0xFFFFFF), AL_CENTER);
+        if (!d.empty())
+            gfx.Text(d, { pv.x + 70.f, cy + 112.f, pv.w - 140.f, 90.f }, FACE_TEXT, 20.f, W_REGULAR, Rgb(0xFFFFFF, 0.72f),
+                     AL_CENTER, false, true);
+        gfx.literal = false;
+    }
+    gfx.StrokeRect(pv.inset(0.6f), MulA(g.th.glassStroke, 0.8f), 22.f, 1.2f);
+
+    float y = pv.b() + 16.f;
+    if (Toggle(Id("cam.mirror"), Row(pv.x, y, pv.w, L"Mirror image", L"Shows you as in a mirror, like meeting apps do", 120.f),
+               g.cfg.cameraMirror))
+        Defer([] { g.cfg.cameraMirror = !g.cfg.cameraMirror; SaveConfig(); });
+
+    // ---- status (3 = in use by another app: not broken, so amber, and the home light stays green)
+    bool busy = st.phase == CamPreviewState::Failed && st.fail == CAMFAIL_BUSY;
+    int state = running ? 1 : busy ? 3 : st.phase == CamPreviewState::Failed ? 2 : st.phase == CamPreviewState::Starting ? 0 : light;
+    Box sp{ rx, card.y + 128.f, rw, 156.f };
+    Glass(sp, 24.f, 0, false);
+    D2D1_COLOR_F sc = state == 1 ? g.th.success : state == 2 ? g.th.danger : state == 3 ? g.th.warn : g.th.text3;
+    gfx.FillCircle(sp.x + 34.f, sp.y + 42.f, 10.f, sc);
+    gfx.Text(state == 1 ? L"Working" : state == 2 ? L"Not working" : state == 3 ? L"In use" : L"Checking\x2026",
+             { sp.x + 56.f, sp.y + 20.f, sp.w - 72.f, 44.f }, FACE_TEXT, 28.f, W_SEMIBOLD, g.th.text);
+    std::wstring info;
+    if (running) {
+        info = c.name + L"\n" + (st.fps > 0.5f ? Format(L"%d \x00D7 %d \x00B7 %.0f fps", st.w, st.h, st.fps) : Format(L"%d \x00D7 %d", st.w, st.h));
+    } else if (st.phase == CamPreviewState::Failed) {
+        std::wstring t, d;
+        CamFailText(st.fail, st.hr, t, d);
+        info = c.name.empty() ? t : c.name + L"\n" + t;
+    } else {
+        info = state == 2 ? lightTitle : c.name;
+    }
+    gfx.literal = true;
+    gfx.Text(info, { sp.x + 24.f, sp.y + 74.f, sp.w - 48.f, 70.f }, FACE_TEXT, 19.f, W_REGULAR, g.th.text2, AL_LEFT, false, true);
+    gfx.literal = false;
+
+    // ---- the cameras
+    y = sp.b() + 22.f;
+    Label(L"Cameras", rx, y, rw);
+    gfx.Text(L"Tap the room camera. The light on the home screen follows it.", { rx, y + 30.f, rw, 48.f }, FACE_TEXT, 17.f,
+             W_REGULAR, g.th.text3, AL_LEFT, false, true);
+    y += 84.f;
+    if (s.ready && s.cams.empty()) gfx.Text(L"No camera found", { rx, y, rw, 40.f }, FACE_TEXT, 21.f, W_SEMIBOLD, g.th.text2);
+    const CamDevice* room = RoomCamera(s);
+    const size_t maxRows = 4;
+    for (size_t i = 0; i < s.cams.size() && i < maxRows; i++) {
+        const CamDevice& d = s.cams[i];
+        Box row{ rx, y, rw, 76.f };
+        uint64_t id = Id("cam.row", i);
+        ui.Add(id, row);
+        bool sel = &d == room;
+        float hov = ui.Anim(id ^ 0x51, ui.Highlighted(id) ? 1.f : 0.f, 16.f);
+        Glass(row, 20.f, hov, false);
+        if (sel) gfx.StrokeRect(row.inset(1.f), g.th.accent, 20.f, 2.f);
+        float cx = row.x + 32.f, cy = row.cy();
+        gfx.StrokeCircle(cx, cy, 12.f, sel ? g.th.accent : g.th.text3, 2.f);
+        if (sel) gfx.FillCircle(cx, cy, 6.5f, g.th.accent);
+        gfx.literal = true;
+        gfx.Text(d.name, { row.x + 58.f, row.y + 9.f, row.w - 70.f, 32.f }, FACE_TEXT, 21.f, W_SEMIBOLD, g.th.text);
+        gfx.literal = false;
+        std::wstring kind = d.problem == 22 ? Tr(L"Turned off")
+                          : d.problem == 28 ? Tr(L"No driver")
+                          : d.problem       ? Format(Tr(L"Problem: Code %d"), d.problem)
+                          : d.virt          ? Tr(L"Virtual camera")
+                          : d.external      ? Tr(L"USB camera")
+                                            : Tr(L"Built-in camera");
+        gfx.literal = true;
+        gfx.Text(kind, { row.x + 58.f, row.y + 41.f, row.w - 70.f, 26.f }, FACE_TEXT, 17.f, W_REGULAR,
+                 d.problem || d.link.empty() ? g.th.danger : g.th.text3);
+        gfx.literal = false;
+        FocusRing(id, row, 20.f);
+        if (ui.Clicked(id) && !sel) {
+            std::wstring n = d.name, hw = d.hwid;
+            Defer([n, hw] {
+                g.cfg.camera = n;
+                g.cfg.cameraId = hw;
+                SaveConfig();
+                g.camTest = CamTest();
+                StartCameraTest();
+            });
+        }
+        y += 84.f;
+    }
+    if (s.cams.size() > maxRows)
+        gfx.Text(Format(Tr(L"and %d more"), (int)(s.cams.size() - maxRows)), { rx, y, rw, 30.f }, FACE_TEXT, 17.f, W_REGULAR, g.th.text3);
+
+    // ---- footer
+    float fy = card.b() - 40.f - 60.f, fx = card.x + 44.f;
+    if (Button(Id("cam.again"), { fx, fy, 250.f, 60.f }, L"Test again", BTN_GLASS, 0xE72C))
+        Defer([] { g.camTest = CamTest(); StartCameraTest(); });
+    fx += 266.f;
+    if (Button(Id("cam.winset"), { fx, fy, 290.f, 60.f }, L"Camera settings", BTN_GLASS, 0xE713))
+        Defer([] { OpenUri(L"ms-settings:camera"); });
+    fx += 306.f;
+    bool denied = s.denied || (st.phase == CamPreviewState::Failed && st.fail == CAMFAIL_DENIED);
+    if (denied && Button(Id("cam.privacy"), { fx, fy, 310.f, 60.f }, L"Privacy settings", BTN_ACCENT, 0xE72E))
+        Defer([] { OpenUri(L"ms-settings:privacy-webcam"); });
+    if (Button(Id("cam.done"), { card.r() - 44.f - 170.f, fy, 170.f, 60.f }, L"Done", BTN_ACCENT)) Defer(CloseSheet);
+    EndSheet();
+}
+
 // ---------------------------------------------------------------- dispatch
 void OnEditKey(int vk, HWND from) {
     if (vk == VK_ESCAPE) { CloseSheet(); return; }
@@ -1124,6 +1545,7 @@ void DrawSheets() {
     case Sheet::Pin: SheetPin(); break;
     case Sheet::AddWidget: SheetAddWidget(); break;
     case Sheet::EditWidget: SheetEditWidget(); break;
+    case Sheet::Camera: SheetCamera(); break;
     default: break;
     }
     ui.layer = 0;

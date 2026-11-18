@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $setup = Join-Path $OutDir 'RoomHome-test-setup.exe'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-& 'C:\Program Files (x86)\NSIS\makensis.exe' /V1 /DVERSION=1.2.0 /DTESTBUILD "/DOUTFILE=$setup" (Join-Path $root 'installer\RoomHome.nsi')
+& 'C:\Program Files (x86)\NSIS\makensis.exe' /V1 /DVERSION=1.3.0 /DTESTBUILD "/DOUTFILE=$setup" (Join-Path $root 'installer\RoomHome.nsi')
 if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
 
 $dir = Join-Path $env:LOCALAPPDATA 'Programs\RoomHome-test'
@@ -39,7 +39,7 @@ $uiLang = if ((Get-UICulture).Name -like 'th*') { 'th' } else { 'en' }
 Check "silent install language = Windows language ($uiLang)" ((AppLang) -eq $uiLang)
 Check "uninstaller written" (Test-Path "$dir\Uninstall.exe")
 $u = Get-ItemProperty $unin -ErrorAction SilentlyContinue
-Check "Apps & features entry" ($u -and $u.DisplayVersion -eq '1.2.0' -and $u.InstallLocation -eq $dir)
+Check "Apps & features entry" ($u -and $u.DisplayVersion -eq '1.3.0' -and $u.InstallLocation -eq $dir)
 Check "start with Windows on by default" ((Get-ItemProperty $run -Name RoomHome -ErrorAction SilentlyContinue).RoomHome -like "*RoomHome-test\RoomHome.exe*--autostart")
 Check "start menu shortcut" (Test-Path $startLnk)
 Check "no desktop shortcut by default" (-not (Test-Path $deskLnk))

@@ -5,6 +5,8 @@
 #include <commctrl.h>
 #include <shlobj.h>
 #include <dwmapi.h>
+#include <dbt.h>
+#include <share.h>
 
 App g;
 
@@ -172,7 +174,10 @@ static HRESULT RenderFrame(ID2D1RenderTarget* rt, float dt) {
         ui.AnimSet(Id("sheetT"), g.sheetT);
         if (g.sheetT > 0.f) ui.KeepAnimating("sheetclose");
     }
-    if (!g.sheetOpen && g.sheetT <= 0.002f) g.sheet = Sheet::None;
+    if (!g.sheetOpen && g.sheetT <= 0.002f) {
+        if (g.sheet == Sheet::Camera) CameraSheetGone();
+        g.sheet = Sheet::None;
+    }
 
     auto pass = [&](bool light) {
         g.themeT = light ? 1.f : 0.f;
@@ -309,6 +314,11 @@ static void OnClockTick() {
         g.shiftPhase++;
         g.shiftX = std::round(2.f * std::cos(g.shiftPhase * 0.9f));
         g.shiftY = std::round(2.f * std::sin(g.shiftPhase * 1.3f));
+    }
+    // the camera test closes itself after 3 quiet minutes, so a forgotten test never keeps the camera on
+    if (g.sheet == Sheet::Camera && g.sheetOpen && g.now - g.cam.startedAt > 180.0) {
+        LASTINPUTINFO lc{ sizeof(lc) };
+        if (GetLastInputInfo(&lc) && GetTickCount() - lc.dwTime > 180000) CloseSheet();
     }
     if (g.calOffset != 0 && g.now - g.calTouched > 60.0) g.calOffset = 0;
     for (auto it = g.photos.begin(); it != g.photos.end();) {   // drop pictures nobody has drawn for a minute
@@ -546,6 +556,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RequestFrame();
         return 0;
     }
+    case WM_APP_CAMERA:
+        OnCamerasChanged();
+        return 0;
+    case WM_APP_CAMFRAME: {
+        if (wp == 1) { Log("camera: released"); return 0; }
+        CamPreviewState before = g.cam.st;
+        OnCameraFrame();
+        const CamPreviewState& st = g.cam.st;
+        if (st.phase != before.phase || st.fail != before.fail)
+            Log("camera: phase=%d fail=%d hr=%08x size=%dx%d first=%.0fms", (int)st.phase, st.fail, (unsigned)st.hr, st.w, st.h,
+                st.firstFrameMs);
+        if (st.frames >= 90 && before.frames < 90) Log("camera: %u pictures, %.1f fps, brightness %.0f", st.frames, st.fps, st.luma);
+        return 0;
+    }
+    case WM_DEVICECHANGE:   // a camera may have been plugged in or removed
+        if (wp == DBT_DEVNODES_CHANGED || wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) g_cams.Rescan();
+        return TRUE;
+    case WM_ACTIVATEAPP:
+        CameraAppActive(wp != 0);
+        break;
     case WM_SETTINGCHANGE:
         if (lp && wcscmp((const wchar_t*)lp, L"ImmersiveColorSet") == 0) {
             g.systemLight = SystemPrefersLight();
@@ -571,6 +601,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, 1);
+        g_camPreview.Stop();
         edits.Clear();
         if (!g.screenshot) ConfigSave(g.cfg);
         PostQuitMessage(0);
@@ -623,6 +654,25 @@ static void DemoData() {
     g.audioOk = true;
     g.volume = 0.45f;
     g.muted = false;
+
+    CamStatus& cs = g.cams;
+    cs = CamStatus();
+    cs.ready = true;
+    cs.seq = 1;
+    CamDevice usb;
+    usb.name = L"USB Conference Camera";
+    usb.link = L"demo:usb";
+    usb.hwid = L"DEMO\\USB-CAMERA";
+    usb.external = true;
+    CamDevice builtIn;
+    builtIn.name = L"Integrated Camera";
+    builtIn.link = L"demo:builtin";
+    builtIn.hwid = L"DEMO\\BUILT-IN-CAMERA";
+    cs.cams = { usb, builtIn };
+    g.cfg.camera = usb.name;
+    g.cfg.cameraId = usb.hwid;
+    g.cam.demo = true;
+    g.camTest = { usb.name, 1, 0, S_OK };
 }
 
 static bool SavePng(IWICBitmap* bmp, const std::wstring& path) {
@@ -647,7 +697,7 @@ static bool SavePng(IWICBitmap* bmp, const std::wstring& path) {
 }
 
 struct ShotOpts {
-    std::wstring out, sheet, theme;
+    std::wstring out, sheet, theme, camState;
     int w = 1920, h = 1080;
     bool edit = false, ambient = false, demo = false;
     float hoverX = -1, hoverY = -1;
@@ -668,8 +718,11 @@ static int RunScreenshot(const ShotOpts& o) {
     if (o.demo) DemoData();
     else {
         g_net.Start(nullptr);
+        g_cams.Start(nullptr);
         g_net.WaitFirst(4000);
+        g_cams.WaitFirst(4000);
         g.net = g_net.Snapshot();
+        g.cams = g_cams.Snapshot();
         g_audio.Init(nullptr);
         RefreshAudio();
     }
@@ -679,6 +732,16 @@ static int RunScreenshot(const ShotOpts& o) {
     g.editMode = o.edit;
     g.ambientOn = o.ambient;
     g.now = Now();
+    // --camstate (with --demo): how the camera light and sheet look when something is wrong
+    const std::wstring& cs = o.camState;
+    if (o.demo && !cs.empty() && !g.cams.cams.empty()) {
+        if (cs == L"none") { g.cams.cams.clear(); g.cfg.camera.clear(); g.cfg.cameraId.clear(); }
+        else if (cs == L"missing") g.cams.cams.erase(g.cams.cams.begin());
+        else if (cs == L"blocked") g.cams.denied = true;
+        else if (cs == L"problem") { g.cams.cams[0].problem = 10; g.cams.cams[0].link.clear(); }
+        else if (cs == L"off") { g.cams.cams[0].problem = 22; g.cams.cams[0].link.clear(); }
+        if (cs != L"busy" && cs != L"dark" && cs != L"starting") g.camTest = CamTest();
+    }
     if (!o.sheet.empty()) {
         if (o.sheet == L"wifi") OpenSheet(Sheet::Wifi);
         else if (o.sheet == L"network") OpenSheet(Sheet::Network);
@@ -691,8 +754,26 @@ static int RunScreenshot(const ShotOpts& o) {
         else if (o.sheet == L"editweb" && g.cfg.dock.size() > 2) OpenEditor(2, g.cfg.dock[2], false);
         else if (o.sheet == L"newprog") { DockItem it = ItemFromPreset(kPresets[kPresetCount - 1]); OpenEditor(-1, it, true); }
         else if (o.sheet == L"addwidget") OpenSheet(Sheet::AddWidget);
+        else if (o.sheet == L"camera") OpenSheet(Sheet::Camera);
         else if (o.sheet.rfind(L"widget", 0) == 0) OpenWidgetEditor(_wtoi(o.sheet.c_str() + 6));
         if (o.sheet == L"wifi" && o.demo && g.net.nets.size() > 4) g.wifi.selected = g.net.nets[4].ssidRaw;
+    }
+    if (o.demo && g.sheet == Sheet::Camera) {
+        CamPreviewState& st = g.cam.st;
+        if (cs == L"busy" || cs == L"nopicture") {
+            st = CamPreviewState();
+            st.phase = CamPreviewState::Failed;
+            st.fail = cs == L"busy" ? CAMFAIL_BUSY : CAMFAIL_NOPICTURE;
+            g.camTest = { g.cam.name, 2, st.fail, S_OK };
+        } else if (cs == L"starting") {
+            st = CamPreviewState();
+            st.phase = CamPreviewState::Starting;
+        } else if (cs == L"dark") {
+            for (size_t i = 0; i + 3 < g.cam.px.size(); i += 4) { g.cam.px[i] /= 24; g.cam.px[i + 1] /= 24; g.cam.px[i + 2] /= 24; }
+            g.cam.seq++;
+            st.luma = 5.f;
+            g.cam.startedAt = g.now - 10.0;
+        }
     }
     if (o.sheet == L"toast") ShowToast(Format(Tr(L"%s isn't installed here, so it opened on the web"), L"Zoom"), 0);
     if (o.sheet == L"toast") ShowToast(Format(Tr(L"Removed %s"), L"Webex"), 0, L"Undo", [] {});
@@ -709,7 +790,7 @@ static int RunScreenshot(const ShotOpts& o) {
     }
     if (FAILED(hr)) return 4;
     gfx.Unbind();
-    if (!o.demo) { g_net.Stop(); g_audio.Shutdown(); }
+    if (!o.demo) { g_net.Stop(); g_cams.Stop(); g_audio.Shutdown(); }
     return SavePng(bmp.Get(), o.out) ? 0 : 5;
 }
 
@@ -757,6 +838,18 @@ static int RunDiag(const std::wstring& out, bool withList) {
     r += Format(L"LAN: present=%d connected=%d speed=", n.lanPresent, n.lanConnected) + SpeedText(n.lanSpeed) + L" adapter=" +
          n.lanAdapter + L" ip=" + n.lanIp + L" gw=" + n.lanGateway + L" dns=" + n.lanDns + L" mac=" + n.lanMac + L"\r\n";
     r += Format(L"Internet: %d (local only %d)\r\n", n.internet, n.localOnly);
+
+    // cameras: only what Windows reports about them; no camera is opened
+    CamStatus cs = ScanCameras();
+    r += Format(L"\r\nCameras: privacy-blocked=%d media-foundation-missing=%d count=%zu\r\n", cs.denied, cs.mfMissing, cs.cams.size());
+    for (auto& d : cs.cams)
+        r += Format(L"  %s [%s%s] problem=%d usable=%d id=%s\r\n    link=%s\r\n", d.name.c_str(),
+                    d.external ? L"external" : L"built-in", d.virt ? L", virtual" : L"", d.problem, d.link.empty() ? 0 : 1,
+                    d.hwid.c_str(), d.link.c_str());
+    std::wstring missing;
+    const CamDevice* room = RoomCamera(cs, &missing);
+    r += L"  room camera: " + (room ? room->name : missing.empty() ? std::wstring(L"(none)") : missing + L" (not connected)") +
+         (g.cfg.camera.empty() ? L" (not chosen yet)" : L"") + L"\r\n";
     std::string bytes = "\xEF\xBB\xBF" + WToUtf8(r);
     return WriteFileAtomic(out, bytes) ? 0 : 1;
 }
@@ -785,6 +878,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         else if (a == L"--screenshot") shot.out = next();
         else if (a == L"--size") { std::wstring v = next(); ParseWH(v.c_str(), shot.w, shot.h, L'x'); }
         else if (a == L"--sheet") shot.sheet = next();
+        else if (a == L"--camstate") shot.camState = next();
         else if (a == L"--theme") shot.theme = next();
         else if (a == L"--edit") shot.edit = true;
         else if (a == L"--ambient") shot.ambient = true;
@@ -812,7 +906,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         else if (a == L"--machine-autostart") machineAuto = next();
         else if (a == L"--open") openSheet = next();
         else if (a == L"--lang") langArg = next();
-        else if (a == L"--log") { std::wstring p = next(); _wfopen_s(&s_log, p.c_str(), L"w"); }
+        else if (a == L"--log") { std::wstring p = next(); s_log = _wfsopen(p.c_str(), L"w", _SH_DENYNO); }   // tests read it live
     }
     LocalFree(argv);
 
@@ -883,6 +977,13 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
 
     g_net.Start(g.hwnd);
     g_audio.Init(g.hwnd);
+    g_cams.Start(g.hwnd);
+    // cameras coming and going (DBT_DEVNODES_CHANGED also reaches every top-level window)
+    DEV_BROADCAST_DEVICEINTERFACE_W camFilter{};
+    camFilter.dbcc_size = sizeof(camFilter);
+    camFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    camFilter.dbcc_classguid = { 0xE5323777, 0xF976, 0x4F5B, { 0x9B, 0x55, 0xB9, 0x46, 0x99, 0xC4, 0x6E, 0x44 } };   // KSCATEGORY_VIDEO_CAMERA
+    HDEVNOTIFY camNotify = RegisterDeviceNotificationW(g.hwnd, &camFilter, DEVICE_NOTIFY_WINDOW_HANDLE);
     RefreshAudio();
     RefreshAutostart();
     ApplyKeepAwake();
@@ -905,6 +1006,12 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     else if (openSheet == L"power") OpenSheet(Sheet::Power);
     else if (openSheet == L"newprog") OpenEditor(-1, ItemFromPreset(kPresets[kPresetCount - 1]), true);
     else if (openSheet == L"addwidget") OpenSheet(Sheet::AddWidget);
+    else if (openSheet == L"camera") {
+        g_cams.WaitFirst(3000);   // the test needs to know the cameras first
+        g.cams = g_cams.Snapshot();
+        OnCamerasChanged();
+        OpenSheet(Sheet::Camera);
+    }
     else if (openSheet == L"edit") g.editMode = true;
 
     MSG m;
@@ -913,8 +1020,12 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&m);
     }
 
+    if (camNotify) UnregisterDeviceNotification(camNotify);
+    g_camPreview.Stop();
+    g_cams.Stop();
     g_net.Stop();
     g_audio.Shutdown();
+    CamWaitIdle(2000);   // a test picture that was still running releases its camera
     SetThreadExecutionState(ES_CONTINUOUS);
     gfx.Unbind();
     s_rt.Reset();

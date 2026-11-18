@@ -364,6 +364,18 @@ static void DrawNetPill(Box b, float wifiW) {
     if (ui.Clicked(lid)) Defer([] { OpenSheet(Sheet::Network); });
 }
 
+// Camera test button: a webcam with a light - green when the room camera is there and working, red when it
+// is missing, blocked or broken, grey while RoomHome is still looking.
+static void DrawCameraButton(Box b) {
+    int light = CameraLight();
+    bool clicked = IconButton(Id("btn.camera"), b, 0xE960, BTN_GLASS, 26.f);
+    D2D1_COLOR_F dot = light == 1 ? g.th.success : light == 2 ? g.th.danger : g.th.text3;
+    float dx = b.cx() + 15.f, dy = b.cy() + 13.f;
+    gfx.FillCircle(dx, dy, 7.5f, g.th.sheet);   // a ring, so the light stands out on the glass
+    gfx.FillCircle(dx, dy, 6.f, dot);
+    if (clicked) Defer([] { OpenSheet(Sheet::Camera); });
+}
+
 static void DrawTopBar() {
     const float M = 56.f, y = 36.f, h = 66.f, gap = 14.f;
     float x = g.vw - M;
@@ -371,7 +383,8 @@ static void DrawTopBar() {
     Box settings{ x - h, y, h, h };         x -= h + gap;
     Box theme{ x - h, y, h, h };            x -= h + gap + 6.f;
     const float volW = 420.f;
-    Box vol{ x - volW, y, volW, h };        x -= volW + gap + 6.f;
+    Box vol{ x - volW, y, volW, h };        x -= volW + gap;
+    Box cam{ x - h, y, h, h };              x -= h + gap + 6.f;
 
     NetInfo& n = g.net;
     std::wstring wt = n.wifiConnected && !n.wifiSsid.empty() ? n.wifiSsid : L"Not connected";
@@ -389,6 +402,7 @@ static void DrawTopBar() {
 
     DrawTitle(std::max(200.f, titleMax));
     DrawNetPill(net, wifiW);
+    DrawCameraButton(cam);
     DrawVolume(vol);
     bool light = g.themeT > 0.5f;
     g.themeOriginX = theme.cx();   // the light/dark reveal grows from this button

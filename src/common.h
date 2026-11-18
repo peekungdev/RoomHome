@@ -36,7 +36,7 @@
 using Microsoft::WRL::ComPtr;
 
 #define APP_NAME     L"RoomHome"
-#define APP_VERSION  L"1.2.0"
+#define APP_VERSION  L"1.3.0"
 #define APP_CLASS    L"RoomHome.MainWindow"
 
 #if defined(_M_ARM64)
@@ -57,6 +57,8 @@ using Microsoft::WRL::ComPtr;
 #define WM_APP_QUIT       (WM_APP + 7)   // sent by --quit (installer)
 #define WM_APP_EDITKEY    (WM_APP + 8)   // wParam: VK from a text field
 #define WM_APP_PHOTO      (WM_APP + 9)   // lParam: PhotoMsg* (receiver deletes)
+#define WM_APP_CAMERA     (WM_APP + 10)  // the camera list or the camera privacy switches changed
+#define WM_APP_CAMFRAME   (WM_APP + 11)  // the camera test has a new picture or state
 
 constexpr float kPi = 3.14159265358979f;
 

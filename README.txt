@@ -1,4 +1,4 @@
-RoomHome 1.2.0 - meeting-room home screen for Windows 11 (x64, x86, ARM64)
+RoomHome 1.3.0 - meeting-room home screen for Windows 11 (x64, x86, ARM64)
 ==========================================================================
 (ภาษาไทย: README.th.txt)
 
@@ -18,6 +18,9 @@ Top-left       Room name and subtitle. Tap it to rename (the subtitle shows the 
 Top bar        Wi-Fi (tap: pick a network, type the password, connect / forget, Wi-Fi on/off)
                LAN (tap: speed, IP, gateway, DNS, MAC for wired and Wi-Fi). The dot shows
                internet: green = online, amber = network but no internet, red = offline.
+               Camera: the webcam button has a light - green = the room camera is there
+               and works, red = it is missing, blocked or broken, grey = still looking.
+               Tap it for a live test picture (see Camera below).
                Volume: tap the speaker to mute, - / + (hold to repeat), or drag the bar.
                Sun/moon: switch light and dark wallpaper/theme.
                Gear: Settings.   Power: Shut down / Restart (press and hold 1.5 seconds).
@@ -60,13 +63,30 @@ Also available   Microsoft Edge, Google Chrome, File Explorer (This PC, for USB 
 Each app can use one of 32 built-in icons and 12 colours, or "App" to show the
 program's own icon.
 
+Camera
+------
+Tap the webcam button (top bar, left of the volume) to check the room camera before a
+meeting. It shows the live picture (like a mirror, as meeting apps do; switch "Mirror
+image" off to see it the other way round), its size and frame rate, and every camera
+Windows knows: USB, built-in and virtual ones. Tap a camera in the list to make it the
+room camera: the light on the home screen watches that one. The first USB camera
+RoomHome sees becomes the room camera by itself.
+When something is wrong the test says what, and how to fix it: not connected, blocked by
+Windows privacy settings (with a button to that page), turned off or a driver problem
+(with the Device Manager code), no picture, a very dark picture (closed privacy shutter?),
+or another app using the camera. That last one keeps the light green: the camera works,
+it is just busy.
+RoomHome opens the camera only while the test is on screen. Closing the test, another app
+coming to the front, or 3 minutes without a touch release it, so meeting apps always get
+the camera. The light never opens the camera: it only asks Windows about the devices.
+
 Settings
 --------
-Language (Auto / English / ไทย), room name, subtitle, 12/24-hour clock, first day of the week, Start with Windows,
-Keep screen on, Ambient clock (dims to a slowly moving clock after 5/15/30 idle minutes,
-which also protects TVs from burn-in), Admin PIN, Appearance (Auto / Dark / Light),
-accent colour, a dark-mode wallpaper and a light-mode wallpaper (any JPG/PNG; empty =
-built-in aurora), Edit home screen, Exit RoomHome.
+Language (Auto / English / ไทย), room name, subtitle, 12/24-hour clock, first day of the
+week, Start with Windows, Keep screen on, Ambient clock (dims to a slowly moving clock
+after 5/15/30 idle minutes, which also protects TVs from burn-in), Admin PIN, Appearance
+(Auto / Dark / Light), accent colour, a dark-mode wallpaper and a light-mode wallpaper
+(any JPG/PNG; empty = built-in aurora), Edit home screen, Exit RoomHome.
 
 Admin PIN (optional): when set, renaming, Settings and dock editing ask for it; the
 unlock lasts 5 minutes. Alt+F4 does not close RoomHome; use Settings > Exit RoomHome.
@@ -83,17 +103,19 @@ Settings file
 To pre-configure many rooms, edit RoomHome.defaults.sample.json and save it next to
 RoomHome.exe as RoomHome.defaults.json: it is used for every user who has no settings yet.
 Extra keys: "language" ("auto", "en", "th"), "dockSlots" (3-8), "volumeStep" (1-20 %),
-"monitor" (0 = main display, 1..n = a specific display).
+"monitor" (0 = main display, 1..n = a specific display), "camera" and "cameraId" (the
+room camera's name and USB ID, written "USB\\VID_046D&PID_085E" in the file; empty = the
+first USB camera seen), "cameraMirror" (true / false).
 
 Installing
 ----------
-RoomHome-1.2.0-setup.exe picks the right build for the PC and asks for a language
+RoomHome-1.3.0-setup.exe picks the right build for the PC and asks for a language
 (English or Thai), which RoomHome then uses until Settings > Language says otherwise.
 Options during setup: Start with Windows (for all users) and a desktop shortcut.
 Silent install (language = the Windows display language unless /LANG is given):
-    RoomHome-1.2.0-setup.exe /S [/LANG=en|th] [/NOAUTOSTART] [/DESKTOP] [/ARCH=x64|x86|arm64] [/D=C:\Folder]
+    RoomHome-1.3.0-setup.exe /S [/LANG=en|th] [/NOAUTOSTART] [/DESKTOP] [/ARCH=x64|x86|arm64] [/D=C:\Folder]
 Uninstall from Settings > Apps, or "C:\Program Files\RoomHome\Uninstall.exe" /S.
-The portable files RoomHome-1.2.0-<arch>.exe need no installation.
+The portable files RoomHome-1.3.0-<arch>.exe need no installation.
 
 Command line
 ------------
@@ -102,7 +124,8 @@ RoomHome.exe --config <file>   use another settings file
 RoomHome.exe --lang en|th      start in this language (same as choosing it in Settings > Language)
 RoomHome.exe --dry-run         show what would be launched / powered off, without doing it
 RoomHome.exe --window 1280x720 run in a window instead of full screen (testing)
-RoomHome.exe --diag <file>     write a report: found apps, audio, Wi-Fi, LAN, internet
+RoomHome.exe --diag <file>     write a report: found apps, audio, Wi-Fi, LAN, internet, cameras
+                               (it lists the cameras without turning any of them on)
 
 Kiosk tips
 ----------

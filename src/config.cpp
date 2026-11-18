@@ -155,6 +155,9 @@ static bool LoadFrom(const std::wstring& path, Config& c) {
     c.volumeStep = (int)Clamp((float)root.GetNum(L"volumeStep", 5), 1, 20);
     c.adminPin = root.GetStr(L"adminPin", L"");
     c.monitor = (int)Clamp((float)root.GetNum(L"monitor", 0), 0, 16);
+    c.camera = root.GetStr(L"camera", L"");
+    c.cameraId = root.GetStr(L"cameraId", L"");
+    c.cameraMirror = root.GetBool(L"cameraMirror", true);
 
     c.dock.clear();
     if (const JValue* dock = root.Find(L"dock"); dock && dock->type == JValue::Array) {
@@ -243,6 +246,9 @@ bool ConfigSave(const Config& c) {
     root.Set(L"volumeStep", JValue::Num(c.volumeStep));
     root.Set(L"adminPin", JValue::Str(c.adminPin));
     root.Set(L"monitor", JValue::Num(c.monitor));
+    root.Set(L"camera", JValue::Str(c.camera));
+    root.Set(L"cameraId", JValue::Str(c.cameraId));
+    root.Set(L"cameraMirror", JValue::Boolean(c.cameraMirror));
     JValue dock = JValue::MakeArray();
     for (auto& it : c.dock) {
         JValue e = JValue::MakeObject();

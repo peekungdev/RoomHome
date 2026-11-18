@@ -2,10 +2,11 @@
 #include "common.h"
 #include "config.h"
 #include "system.h"
+#include "camera.h"
 #include "gfx.h"
 #include "ui.h"
 
-enum class Sheet { None, Wifi, Network, Settings, Power, AddApp, EditApp, Rename, Pin, AddWidget, EditWidget };
+enum class Sheet { None, Wifi, Network, Settings, Power, AddApp, EditApp, Rename, Pin, AddWidget, EditWidget, Camera };
 
 struct Theme {
     D2D1_COLOR_F text, text2, text3, glass, glassHi, glassStroke, sheet, field, shadow, dim, accent, onAccent,
@@ -78,6 +79,27 @@ struct PinUi {
     bool wrong = false;
 };
 
+// the camera test sheet
+struct CamUi {
+    std::wstring name, link;      // the camera being shown
+    CamPreviewState st;
+    std::vector<uint8_t> px;      // newest picture, BGRX top-down
+    int pw = 0, ph = 0;
+    uint32_t seq = 0, bmpSeq = 0, bmpGen = 0;
+    ComPtr<ID2D1Bitmap> bmp;
+    double startedAt = 0;
+    bool paused = false;          // stopped while another app is in front
+    bool demo = false;            // screenshots: a test pattern instead of a camera
+};
+
+// the last live test, which the camera light on the home screen also shows
+struct CamTest {
+    std::wstring name;
+    int result = 0;               // 0 not tested, 1 worked, 2 failed
+    int fail = 0;                 // CAMFAIL_*
+    HRESULT hr = S_OK;
+};
+
 struct App {
     HWND hwnd = nullptr;
     Config cfg;
@@ -103,6 +125,9 @@ struct App {
     float themeOriginX = 0, themeOriginY = 0;   // virtual coordinates
 
     NetInfo net;
+    CamStatus cams;
+    CamUi cam;
+    CamTest camTest;
     bool audioOk = false, muted = false;
     float volume = 0;
     std::wstring audioDevice;
@@ -208,3 +233,11 @@ void RemoveDockItem(int index);
 void SetTheme(int theme);
 void OpenWidgetEditor(int index);
 void RemoveWidget(int index);
+// camera (sheets.cpp)
+const CamDevice* RoomCamera(const CamStatus& s, std::wstring* missingName = nullptr);
+int CameraLight(std::wstring* title = nullptr, std::wstring* detail = nullptr);   // 0 checking, 1 works, 2 not working
+void OnCamerasChanged();      // WM_APP_CAMERA
+void OnCameraFrame();         // WM_APP_CAMFRAME
+void CameraAppActive(bool active);
+void CameraSheetGone();       // the sheet has finished closing: drop the last picture
+void DemoCamera();            // screenshots: a test pattern for the preview

@@ -1,8 +1,8 @@
 # RoomHome
 
 A full-screen home screen for meeting-room PCs running Windows 11. It shows the time, date and calendar,
-and gives people one-tap buttons for Zoom, Microsoft Teams and Google Meet, plus Wi-Fi, network, volume
-and power controls. Meeting apps open on top of it; when they close, RoomHome is back.
+and gives people one-tap buttons for Zoom, Microsoft Teams and Google Meet, plus Wi-Fi, network, camera,
+volume and power controls. Meeting apps open on top of it; when they close, RoomHome is back.
 
 English and Thai (ภาษาไทย) · x64, x86 (32-bit) and ARM64 · one small .exe, nothing else to install
 
@@ -22,6 +22,9 @@ English and Thai (ภาษาไทย) · x64, x86 (32-bit) and ARM64 · one s
 - **Top bar**:
   - Wi-Fi: pick a network, type the password, connect or forget, turn Wi-Fi on and off.
   - LAN: speed, IP, gateway, DNS and MAC, with an internet status dot.
+  - Camera: a light that is green when the room camera is connected and working, and red when it is
+    missing, blocked by Windows privacy settings or has a driver problem. Tap it for a live test picture,
+    the camera's resolution and frame rate, and a plain-language fix when something is wrong.
   - Volume: mute, − / +, or drag the slider.
   - Light/dark switch, Settings, and Shut down / Restart (press and hold to confirm).
 - **Editing**: press and hold any widget or app, then drag to reorder, tap to edit, or remove (with Undo).
@@ -40,8 +43,8 @@ English and Thai (ภาษาไทย) · x64, x86 (32-bit) and ARM64 · one s
 | ![Light theme](docs/screenshots/home-light.jpg) | ![Thai](docs/screenshots/home-th.jpg) |
 | **Editing the home screen** | **Settings** |
 | ![Edit mode](docs/screenshots/edit.jpg) | ![Settings](docs/screenshots/settings.jpg) |
-| **Wi-Fi** | |
-| ![Wi-Fi](docs/screenshots/wifi.jpg) | |
+| **Camera test** (a test pattern stands in for the camera) | **Wi-Fi** |
+| ![Camera test](docs/screenshots/camera.jpg) | ![Wi-Fi](docs/screenshots/wifi.jpg) |
 
 ## Download and install
 
@@ -55,7 +58,7 @@ Get the latest version from [Releases](../../releases):
 Silent install for deploying to many rooms:
 
 ```text
-RoomHome-1.2.0-setup.exe /S [/LANG=en|th] [/NOAUTOSTART] [/DESKTOP] [/ARCH=x64|x86|arm64] [/D=C:\Folder]
+RoomHome-1.3.0-setup.exe /S [/LANG=en|th] [/NOAUTOSTART] [/DESKTOP] [/ARCH=x64|x86|arm64] [/D=C:\Folder]
 ```
 
 | Switch | Effect |
@@ -79,7 +82,9 @@ To set up many rooms the same way, edit
 [`RoomHome.defaults.sample.json`](RoomHome.defaults.sample.json) and save it next to `RoomHome.exe` as
 `RoomHome.defaults.json`. Any user who has no settings yet starts from it. Extra keys that have no
 on-screen setting: `"dockSlots"` (3 to 8), `"volumeStep"` (1 to 20 %) and `"monitor"` (0 = main display,
-1 to n = a specific display).
+1 to n = a specific display). The room camera is stored as `"camera"` (its name) and `"cameraId"` (for
+example `"USB\\VID_046D&PID_085E"`). Leave both empty and the first USB camera RoomHome sees becomes the
+room camera.
 
 Command line:
 
@@ -90,7 +95,7 @@ Command line:
 | `--lang en\|th` | Start in this language (same as choosing it in Settings) |
 | `--dry-run` | Show what would be launched or powered off, without doing it |
 | `--window 1280x720` | Run in a window instead of full screen |
-| `--diag <file>` | Write a report of the apps, audio, Wi-Fi, LAN and internet it finds |
+| `--diag <file>` | Write a report of the apps, audio, Wi-Fi, LAN, internet and cameras it finds (no camera is turned on) |
 
 The full user guide is [`README.txt`](README.txt) (English) and [`README.th.txt`](README.th.txt) (ภาษาไทย).
 Both are installed with the app.
@@ -103,6 +108,9 @@ Both are installed with the app.
 - Company Wi-Fi that needs a username sign-in (802.1X) must be joined from the Windows Wi-Fi list.
   RoomHome has a button for that list too.
 - For a dedicated room PC, combine Start with Windows with automatic sign-in of a local account.
+- RoomHome turns the camera on only while the camera test is on screen. Closing the test, another app
+  coming to the front, or 3 minutes without a touch release it, so meeting apps always get the camera.
+  The camera light never turns the camera on: it only asks Windows about the devices.
 
 ## Building from source
 
@@ -134,17 +142,25 @@ links the C runtime statically, so there is no Visual C++ redistributable to ins
 
 ## Tests
 
-- `tools\ui-test.ps1 -Arch x64|x86|arm64 -OutDir <folder>`: starts RoomHome off-screen with a throw-away
-  settings file. It drives the real window: rename, theme switch, Start with Windows, a dry-run launch,
-  adding a note widget, a photo widget and switching language. It only closes the window it started.
+- `tools\ui-test.ps1 -Arch x64|x86|arm64 -OutDir <folder> [-Camera]`: starts RoomHome off-screen with a
+  throw-away settings file. It drives the real window: rename, theme switch, Start with Windows, a dry-run
+  launch, adding a note widget, a photo widget and switching language. It only closes the window it
+  started. `-Camera` adds a live camera test: it turns the PC's camera on for a few seconds and checks
+  from RoomHome's log that pictures arrive and that the camera is let go when the test closes. It never
+  captures or saves a picture.
 - `tools\installer-test.ps1 -OutDir <folder>`: builds a per-user test installer, then checks a default
   install, a reinstall with switches (`/ARCH`, `/LANG`, `/NOAUTOSTART`, `/DESKTOP`) and the uninstall.
-- `RoomHome.exe --screenshot out.png --demo [--sheet settings|wifi|...] [--lang th]` renders a screen to a
-  PNG file without opening a window. The screenshots above were made this way.
+- `RoomHome.exe --screenshot out.png --demo [--sheet settings|wifi|camera|...] [--lang th]` renders a
+  screen to a PNG file without opening a window. The screenshots above were made this way. With
+  `--sheet camera`, `--camstate none|missing|blocked|problem|off|busy|nopicture|dark|starting` shows how
+  each camera problem looks.
 
-Both test scripts pass on all three builds. The x64 and x86 builds have also been used on other PCs,
-where Wi-Fi and a real shutdown worked. Not yet tested on real hardware:
+Both test scripts pass on all three builds, including the live camera test with a USB webcam. The x64
+and x86 builds have also been used on other PCs, where Wi-Fi and a real shutdown worked. Not yet tested
+on real hardware:
 
 - touch and pen input
 - an actual restart (the automated tests use `--dry-run`)
+- unplugging the camera while RoomHome runs, and a camera with a driver problem (shown only in
+  simulated screenshots so far)
 - building on an x64 machine (it has only been built on ARM64 so far)
